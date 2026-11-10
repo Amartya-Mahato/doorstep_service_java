@@ -4,4 +4,16 @@ target/
 .vscode/
 .classpath
 .project
-.settings/
+.settings/# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and JVM crash reports
+*.log
+hs_err_pid*
+replay_pid*
+
+# Local environment secrets
+.env
+.env.*
+!.env.example

@@ -177,6 +177,10 @@ class BookingApiIntegrationTest {
         assertThat(rest.getForEntity("/technicians/999/schedule?date=2026-11-12", Map.class).getStatusCode())
                 .isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(rest.getForEntity("/bookings/not-a-uuid", Map.class).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        // unknown URLs are 404 with the standard error body, not 500
+        ResponseEntity<Map> unknown = rest.getForEntity("/no-such-endpoint", Map.class);
+        assertThat(unknown.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(unknown.getBody().get("code")).isEqualTo("NOT_FOUND");
     }
 
     @Test

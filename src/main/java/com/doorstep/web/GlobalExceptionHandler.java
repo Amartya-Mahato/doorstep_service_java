@@ -1,13 +1,12 @@
 package com.doorstep.web;
 
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.ErrorResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -24,12 +23,12 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(ApiException.class)
-    public ResponseEntity<Map<String, Object>> handleApi(ApiException e, HttpServletRequest req) {
+    public ResponseEntity<ApiError> handleApi(ApiException e, HttpServletRequest req) {
         return body(e.getStatus(), e.getCode(), e.getMessage(), req, null);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException e, HttpServletRequest req) {
+    public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException e, HttpServletRequest req) {
         List<String> details = e.getBindingResult().getFieldErrors().stream()
                 .map(f -> f.getField() + ": " + f.getDefaultMessage()).toList();
         return body(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request validation failed", req, details);
@@ -37,12 +36,18 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
             MissingServletRequestParameterException.class, MissingRequestHeaderException.class})
-    public ResponseEntity<Map<String, Object>> handleMalformed(Exception e, HttpServletRequest req) {
+    public ResponseEntity<ApiError> handleMalformed(Exception e, HttpServletRequest req) {
         return body(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Malformed or missing input: " + shortMessage(e), req, null);
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleOther(Exception e, HttpServletRequest req) {
+    public ResponseEntity<ApiError> handleOther(Exception e, HttpServletRequest req) {
+        // Spring MVC's own client errors (unknown URL, wrong method, wrong content type) keep their 4xx status.
+        if (e instanceof ErrorResponse er && er.getStatusCode().is4xxClientError()) {
+            HttpStatus status = HttpStatus.valueOf(er.getStatusCode().value());
+            String code = status == HttpStatus.NOT_FOUND ? "NOT_FOUND" : "INVALID_REQUEST";
+            return body(status, code, er.getBody().getDetail(), req, null);
+        }
         log.error("Unhandled error on {}", req.getRequestURI(), e);
         return body(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Unexpected error", req, null);
     }
@@ -60,17 +65,9 @@ public class GlobalExceptionHandler {
         return "request body is not valid JSON or has a bad field format";
     }
 
-    private static ResponseEntity<Map<String, Object>> body(HttpStatus status, String code, String message,
-                                                            HttpServletRequest req, List<String> details) {
-        Map<String, Object> b = new LinkedHashMap<>();
-        b.put("timestamp", Instant.now().toString());
-        b.put("status", status.value());
-        b.put("code", code);
-        b.put("message", message);
-        b.put("path", req.getRequestURI());
-        if (details != null) {
-            b.put("details", details);
-        }
-        return ResponseEntity.status(status).body(b);
+    private static ResponseEntity<ApiError> body(HttpStatus status, String code, String message,
+                                                 HttpServletRequest req, List<String> details) {
+        return ResponseEntity.status(status).body(
+                new ApiError(Instant.now().toString(), status.value(), code, message, req.getRequestURI(), details));
     }
 }

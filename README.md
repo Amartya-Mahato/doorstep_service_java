@@ -1,169 +1,83 @@
 # Doorstep Service Booking
 
-A backend service built using **Spring Boot 3, Java 17, and PostgreSQL** for booking doorstep vehicle-battery services. The application checks technician availability and automatically assigns a qualified technician based on their skills, service zone, working hours, and existing bookings.
+A **Spring Boot 3 / Java 17 / PostgreSQL** backend for booking doorstep vehicle-battery services. It checks technician availability and assigns a qualified technician based on skill, service zone, working hours and existing bookings. Concurrent requests for the same slot cannot double-book a technician.
 
-The booking system is designed to prevent double-bookings, even when multiple requests are made at the same time.
+- [DESIGN.md](DESIGN.md): design decisions
+- [API_TESTING.md](API_TESTING.md): step-by-step manual API tests
+- Swagger UI: `http://localhost:8080/swagger-ui.html` (while the app is running)
 
-For more details, refer to [DESIGN.md](DESIGN.md) for the design decisions and [API_TESTING.md](API_TESTING.md) for manual API testing instructions.
+## Requirements
+
+- JDK 17 or later
+- Docker (only for the Docker setup)
+
+Maven does not need to be installed. The project includes the Maven Wrapper, which downloads Maven on first use. Use `./mvnw` on Linux/macOS and `.\mvnw` on Windows (PowerShell or Command Prompt).
 
 ## Run the Application
 
-### Using Docker (Recommended)
+### With Docker (recommended)
 
-Start the application and PostgreSQL database with:
+Starts the app and PostgreSQL 16:
 
-```bash
+```sh
 docker compose up --build
 ```
 
-- Application: `http://localhost:8080`
+- API: `http://localhost:8080`
 - PostgreSQL: `localhost:5432`
-- Database schema and seed data are applied automatically using Flyway.
+- Flyway applies the schema and seed data on startup.
 
-### Without Docker (Local Profile)
+### Without Docker (in-memory H2)
 
-The application can also run locally using an in-memory H2 database. No separate database setup is required.
+No database setup needed. Data is reset on every start.
 
-```bash
-mvn spring-boot:run "-Dspring-boot.run.profiles=local"
+Linux/macOS:
+
+```sh
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-### Using Your Own PostgreSQL Database
+Windows:
 
-The default configuration expects a PostgreSQL database with the following credentials:
-
-- Database: `doorstep`
-- Username: `doorstep`
-- Password: `doorstep`
-- Host: `localhost`
-- Port: `5432`
-
-Start the application using:
-
-```bash
-mvn spring-boot:run
+```powershell
+.\mvnw spring-boot:run "-Dspring-boot.run.profiles=local"
 ```
 
-You can override the database configuration using the following environment variables:
+### With your own PostgreSQL
 
-- `SPRING_DATASOURCE_URL`
-- `SPRING_DATASOURCE_USERNAME`
-- `SPRING_DATASOURCE_PASSWORD`
+By default the app connects to `jdbc:postgresql://localhost:5432/doorstep` with username `doorstep` and password `doorstep`. Override with the `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME` and `SPRING_DATASOURCE_PASSWORD` environment variables.
 
-## Running Tests
-
-Run the complete test suite using:
-
-```bash
-mvn test
+```sh
+./mvnw spring-boot:run     # Linux/macOS
+.\mvnw spring-boot:run     # Windows
 ```
 
-**Requirements:**
-- JDK 17 or later
-- Maven
+If port 8080 is already in use, add `-Dspring-boot.run.arguments=--server.port=8081` (quote the whole argument in PowerShell).
 
-Docker is not required. Tests run against an in-memory H2 database configured in PostgreSQL compatibility mode.
+## API Documentation (Swagger)
 
-### Test Coverage
+With the app running:
 
-| Test Class | What It Covers |
+| URL | Content |
 |---|---|
-| `AssignmentPolicyTest` | Booking overlaps, 30-minute buffer rules, shift boundaries, technician skills and service zones, slot boundaries, booking lead time, cancellation cutoff, technician selection based on the fewest bookings, and tie-breaking rules. |
-| `BookingApiIntegrationTest` | Complete API workflows, idempotency, HTTP status codes and error responses, cancellation and slot availability, pagination, and health checks. |
-| `ConcurrentBookingTest` | Handles 10–12 parallel HTTP requests for the same slot and verifies that exactly the available number of technicians get assigned while the remaining requests receive `409` responses. Also covers overlapping bookings with different start times, concurrent retries using the same `Idempotency-Key`, and database consistency checks. |
+| `http://localhost:8080/swagger-ui.html` | Swagger UI: browse and try every endpoint |
+| `http://localhost:8080/v3/api-docs` | OpenAPI 3 spec (JSON), for Postman or code generators |
 
-To run only the concurrency tests:
-
-```bash
-mvn test -Dtest=ConcurrentBookingTest
-```
-
-This test is particularly useful for verifying that the booking system handles simultaneous requests correctly.
-
-### Environment-Specific Troubleshooting
-
-**Windows with JDK 17.0.21**
-
-If the application or tests fail with an error similar to:
-
-```text
-Unable to establish loopback connection
-Invalid argument: connect
-UnixDomainSockets
-```
-
-This can be resolved by configuring a temporary directory for Unix domain sockets.
-
-Create the directory once:
-
-```powershell
-mkdir C:\jtmp
-```
-
-Then set the following environment variable before running Maven:
-
-```powershell
-$env:JAVA_TOOL_OPTIONS="-Djdk.net.unixdomain.tmpdir=C:\jtmp"
-```
-
-### Verification
-
-The application was tested using Docker Compose with PostgreSQL 16.
-
-The following scenarios were verified:
-
-- Successful application startup and database migrations.
-- Idempotent booking retries.
-- A 10-request parallel booking race for the last available technician.
-- Exactly one request received `201 Created`, while the remaining nine received `409 Conflict`.
-- Database verification confirmed that each technician had only one corresponding booking for the contested slot.
-
-Flyway 9.22 displays a harmless warning indicating that PostgreSQL 16 is newer than its tested version.
+Swagger UI lists each endpoint's parameters, request/response schemas, and the status and error codes it can return.
 
 ## API Overview
 
-| Endpoint | Successful Response | Possible Errors |
+| Endpoint | Success | Errors |
 |---|---|---|
-| `GET /availability?serviceId=&pincode=&date=YYYY-MM-DD` | `200` – Returns available slots for the requested service, pincode, and date. | `400`, `404` (service), `422` (pincode) |
-| `POST /bookings` | `201` – New booking created. `200` – Existing booking returned for an idempotent retry. | `400`, `404`, `422`, `409 NO_AVAILABILITY` |
-| `GET /bookings/{id}` | `200` – Returns booking details. | `404`, `400` (invalid UUID) |
-| `POST /bookings/{id}/cancel` | `200` – Returns the cancelled booking. | `404`, `409 CANCEL_TOO_LATE` / `INVALID_STATE` |
-| `GET /technicians/{id}/schedule?date=` | `200` – Returns the technician's bookings for the specified date, ordered by start time. | `404` |
-| `GET /bookings?phone=&page=&size=` | `200` – Returns paginated booking records. | `400` |
-| `GET /actuator/health` | `200` – Application health status. | — |
+| `GET /availability?serviceId=&pincode=&date=YYYY-MM-DD` | `200` bookable start times | `400`, `404` (service), `422` (pincode) |
+| `POST /bookings` (optional `Idempotency-Key` header) | `201` created, `200` idempotent retry | `400`, `404`, `409 NO_AVAILABILITY`, `422` |
+| `GET /bookings/{id}` | `200` | `400` (not a UUID), `404` |
+| `POST /bookings/{id}/cancel` | `200` cancelled booking | `404`, `409 CANCEL_TOO_LATE` / `INVALID_STATE` |
+| `GET /technicians/{id}/schedule?date=YYYY-MM-DD` | `200` bookings ordered by start time | `400`, `404` |
+| `GET /bookings?phone=&page=0&size=20` | `200` paginated bookings | `400` |
+| `GET /actuator/health` | `200` | |
 
-### Request and Response Details
-
-**1. Check Availability**
-
-```http
-GET /availability?serviceId=&pincode=&date=YYYY-MM-DD
-```
-
-Successful response (`200`):
-
-```json
-{
-  "serviceId": 1,
-  "pincode": "560001",
-  "date": "2026-11-12",
-  "slots": ["ISO local datetimes"]
-}
-```
-
-**2. Create a Booking**
-
-```http
-POST /bookings
-```
-
-Optional header:
-
-```http
-Idempotency-Key: abc-1
-```
-
-Request body:
+Create-booking request body:
 
 ```json
 {
@@ -174,242 +88,110 @@ Request body:
 }
 ```
 
-A new booking returns `201 Created`. If the same idempotency key is submitted again, the original booking is returned with `200 OK`.
+Example (Linux/macOS, Git Bash, WSL):
 
-**3. Get Booking Details**
-
-```http
-GET /bookings/{id}
-```
-
-**4. Cancel a Booking**
-
-```http
-POST /bookings/{id}/cancel
-```
-
-**5. View a Technician's Schedule**
-
-```http
-GET /technicians/{id}/schedule?date=2026-11-12
-```
-
-**6. List Customer Bookings**
-
-```http
-GET /bookings?phone=&page=&size=
-```
-
-The response includes:
-
-- `content`
-- `page`
-- `size`
-- `totalElements`
-- `totalPages`
-
-**7. Application Health**
-
-```http
-GET /actuator/health
-```
-
-### Standard Error Response
-
-All API errors follow a consistent response structure:
-
-```json
-{
-  "timestamp": "...",
-  "status": 409,
-  "code": "NO_AVAILABILITY",
-  "message": "...",
-  "path": "...",
-  "details": "..."
-}
-```
-
-The `details` field is optional.
-
-The application uses the following error codes:
-
-| Error Code | Description |
-|---|---|
-| `INVALID_REQUEST` | Request validation failed. |
-| `NOT_FOUND` | Requested resource does not exist. |
-| `PINCODE_NOT_SERVICEABLE` | The requested pincode is not serviceable. |
-| `INVALID_SLOT` | Requested time does not match a valid booking slot. |
-| `OUTSIDE_BOOKING_WINDOW` | Requested booking is outside the allowed time window. |
-| `NO_AVAILABILITY` | No qualified technician is available. |
-| `CANCEL_TOO_LATE` | Cancellation was requested after the allowed cutoff. |
-| `INVALID_STATE` | Booking cannot be cancelled in its current state. |
-| `INTERNAL_ERROR` | Unexpected server-side error. |
-
-### Example API Request
-
-```bash
-curl -X POST localhost:8080/bookings \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: abc-1' \
+```sh
+curl -X POST http://localhost:8080/bookings \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: abc-1" \
   -d '{"serviceId":1,"pincode":"560001","startTime":"2026-11-12T10:00:00","customerPhone":"9876543210"}'
 ```
 
-Additional API examples, including expected responses, are available in [API_TESTING.md](API_TESTING.md).
+Example (Windows PowerShell):
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/bookings `
+  -ContentType "application/json" `
+  -Headers @{ "Idempotency-Key" = "abc-1" } `
+  -Body '{"serviceId":1,"pincode":"560001","startTime":"2026-11-12T10:00:00","customerPhone":"9876543210"}'
+```
+
+`startTime` must be 2 hours to 7 days from now, so change the date before running these examples.
+
+### Error Response
+
+Every error has the same shape:
+
+```json
+{
+  "timestamp": "2026-11-10T18:06:55.852Z",
+  "status": 400,
+  "code": "INVALID_REQUEST",
+  "message": "Request validation failed",
+  "path": "/bookings",
+  "details": ["customerPhone: must be 10-15 digits, optional leading +"]
+}
+```
+
+`details` is only present for field validation errors.
+
+| Code | Status | Meaning |
+|---|---|---|
+| `INVALID_REQUEST` | 400 | Validation failed, or a missing or malformed parameter or body |
+| `NOT_FOUND` | 404 | Service, booking, technician or URL does not exist |
+| `PINCODE_NOT_SERVICEABLE` | 422 | Pincode is not in any zone |
+| `INVALID_SLOT` | 422 | `startTime` is not on a 30-minute boundary |
+| `OUTSIDE_BOOKING_WINDOW` | 422 | `startTime` is less than 2 hours or more than 7 days away |
+| `NO_AVAILABILITY` | 409 | No qualified technician is free |
+| `CANCEL_TOO_LATE` | 409 | Less than 1 hour before start |
+| `INVALID_STATE` | 409 | Booking is not `CONFIRMED` |
+| `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 ## Seed Data
 
-The application comes with initial data to make local setup and testing easier.
+Flyway loads 3 services, 2 zones with 3 pincodes each, and 6 technicians working 08:00–20:00. See [V2__seed.sql](src/main/resources/db/migration/V2__seed.sql) (schema: [V1__schema.sql](src/main/resources/db/migration/V1__schema.sql)) and the tables in [API_TESTING.md](API_TESTING.md#seed-data).
 
-| Data | Details |
+## Business Rules
+
+- **Time zone:** all times are IST. `startTime` is a local date-time without offset. The app uses a single injectable `Clock`, so tests can control the time.
+- **Slots:** start times are on 30-minute boundaries, and the job must finish within the technician's shift.
+- **Booking window:** at least 2 hours and at most 7 days ahead (both inclusive). Availability for dates outside the window returns an empty `slots` list.
+- **Travel buffer:** a technician needs at least 30 minutes between jobs. Exactly 30 minutes is allowed.
+- **Assignment:** among technicians with the right skill and zone and no conflicting booking, pick the one with the fewest non-cancelled bookings that day, then the lowest ID.
+- **Cancellation:** only `CONFIRMED` bookings, up to 1 hour before start (inclusive). `COMPLETED` exists in the model, but no endpoint sets it yet.
+- **Idempotency:** `Idempotency-Key` is optional and globally unique (at most 255 characters). A repeated key returns the original booking even if the body differs.
+- **Validation:** phone is 10–15 digits with an optional leading `+`, stored as sent. Pincode is 6 digits, and each pincode belongs to exactly one zone (enforced by a unique constraint).
+- **Schedule:** a technician's schedule excludes cancelled bookings.
+- **Status codes:** `400` malformed input, `404` unknown resource, `422` well-formed but breaks a booking rule, `409` no capacity or wrong booking state.
+
+Not included: authentication, rate limiting (discussed in DESIGN.md), admin APIs and notifications.
+
+## Running Tests
+
+No Docker needed. Tests use in-memory H2 in PostgreSQL compatibility mode.
+
+```sh
+./mvnw test                               # Linux/macOS
+.\mvnw test                               # Windows
+./mvnw test -Dtest=ConcurrentBookingTest  # one class (Windows: .\mvnw test "-Dtest=ConcurrentBookingTest")
+```
+
+| Test class | Covers |
 |---|---|
-| Services | 3 services |
-| Service Zones | 2 zones |
-| Serviceable Pincodes | 3 pincodes per zone |
-| Technicians | 6 technicians |
-| Working Shifts | 08:00–20:00 |
+| `AssignmentPolicyTest` | Overlap and 30-minute buffer, shift and slot boundaries, skill/zone eligibility, booking window, cancellation cutoff, fewest-bookings and lowest-ID tie-break |
+| `BookingApiIntegrationTest` | End-to-end HTTP flows, idempotency, status codes and error body, cancellation freeing slots, pagination, health |
+| `ConcurrentBookingTest` | 10–12 parallel requests for the last free technician (exactly one `201`, the rest `409`), overlapping start times, parallel retries with one `Idempotency-Key`, and database consistency checks |
 
-The database schema and initial data are maintained through Flyway migrations:
+### Troubleshooting (Windows)
 
-- Schema: [V1__schema.sql](src/main/resources/db/migration/V1__schema.sql)
-- Seed data: [V2__seed.sql](src/main/resources/db/migration/V2__seed.sql)
+If the app or tests fail with `Unable to establish loopback connection` / `Invalid argument: connect` (a JDK Unix-domain-socket issue on some Windows setups), point the socket temp dir at a short path:
 
-## Business Rules and Assumptions
+```powershell
+mkdir C:\jtmp
+$env:JAVA_TOOL_OPTIONS = "-Djdk.net.unixdomain.tmpdir=C:\jtmp"   # Command Prompt: set JAVA_TOOL_OPTIONS=-Djdk.net.unixdomain.tmpdir=C:\jtmp
+```
 
-The following rules define how bookings, technician assignments, and cancellations work.
-
-### 1. Time Handling
-
-- All application times are handled in IST.
-- `startTime` is accepted as a local date-time without a timezone offset.
-- The server uses a single injectable `Clock` instance for time-dependent operations, making the logic easier to test consistently.
-
-### 2. Booking Buffer
-
-A 30-minute buffer is maintained between consecutive jobs assigned to the same technician.
-
-- A booking blocks the technician from its start time until 30 minutes after its end time.
-- A new booking must also leave at least 30 minutes between its end time and the next booking's start time.
-- Exactly 30 minutes between jobs is allowed.
-
-### 3. Booking Lead Time
-
-Bookings must be made at least 2 hours and no more than 7 days in advance.
-
-Both boundaries are inclusive.
-
-### 4. Technician Assignment and Tie-Breaking
-
-When multiple technicians qualify for a booking, the system follows these rules:
-
-- Only technicians with the required skills and service-zone eligibility are considered.
-- Existing bookings, including buffer periods, are checked before assignment.
-- The technician with the fewest non-cancelled bookings on that calendar day is preferred.
-- If multiple technicians have the same booking count, the technician with the lowest ID is selected.
-
-This implements the rule 6 tie-break condition.
-
-### 5. Cancellation Rules
-
-- A booking can be cancelled until one hour before its scheduled start time.
-- Cancellation is allowed when `now <= start - 1 hour`, including the exact cutoff.
-- Only bookings in the `CONFIRMED` state can be cancelled.
-- Attempting to cancel a booking in any other state returns `409 INVALID_STATE`.
-- `COMPLETED` is included in the booking model, but no endpoint currently changes a booking to that state.
-
-### 6. Idempotency
-
-- The `Idempotency-Key` header is optional.
-- The key alone identifies a request.
-- Repeating a request with the same key returns the original booking, even if the new request body is different.
-- The request body is not compared against the original request.
-- Keys are globally unique and are not scoped to individual customers.
-
-### 7. Availability Checks
-
-Availability is calculated using the following conditions:
-
-- The requested date must fall within the 2-hour to 7-day booking window.
-- Technician shifts are taken into account.
-- Existing bookings and buffer periods are considered.
-
-Dates in the past or beyond the permitted booking window return an empty `slots` array.
-
-### 8. HTTP Status Codes
-
-The API distinguishes between invalid requests, business-rule violations, and booking conflicts.
-
-| Status Code | Usage |
-|---|---|
-| `400 Bad Request` | Request validation or formatting errors. |
-| `404 Not Found` | Requested resource does not exist. |
-| `422 Unprocessable Entity` | Well-formed requests that violate business rules, such as invalid slots, bookings outside the permitted window, or unserviceable pincodes. |
-| `409 Conflict` | No available technician or a booking state conflict. |
-
-### 9. Input Validation
-
-- Phone numbers must contain 10–15 digits, with an optional leading `+`.
-- Phone numbers are stored without normalization.
-- Pincodes must contain exactly 6 digits.
-- Each pincode belongs to exactly one service zone, enforced through a unique database constraint.
-
-### 10. Technician Schedule
-
-The technician schedule endpoint returns bookings ordered by their start time.
-
-Cancelled bookings are excluded from the response.
-
-### 11. Features Not Included
-
-The current implementation focuses on the core booking and technician-assignment workflow. The following features are outside the scope of this version:
-
-- Rate limiting (covered in `DESIGN.md`).
-- Authentication and authorization.
-- Admin APIs.
-- Customer notifications.
-- Maven Wrapper (`mvnw`).
+Flyway 9.22 logs a warning that PostgreSQL 16 is newer than its tested version. It can be ignored.
 
 ## Project Structure
 
-The codebase is organized into separate layers to keep business logic, database operations, and API handling independent.
-
 ```text
 src/main/java/com/doorstep
-│
-├── domain/
-│   └── Entities and AssignmentPolicy
-│       (Business entities and standalone assignment rules)
-│
-├── repo/
-│   └── Spring Data repositories
-│       (Database access, including the FOR UPDATE query)
-│
-├── service/
-│   ├── AvailabilityService
-│   ├── BookingCreator
-│   └── BookingService
-│       (Availability checks, transactional booking creation,
-│        idempotency, cancellation, and read operations)
-│
-├── web/
-│   └── Controllers, DTOs, and error handling
-│       (REST API endpoints and request/response handling)
-│
-└── config/
-    ├── Clock bean
-    └── Request-ID filter
-        (X-Request-Id handling and logging MDC)
+├── domain/   Entities and AssignmentPolicy (pure assignment rules, no Spring)
+├── repo/     Spring Data repositories, including the SELECT ... FOR UPDATE lock
+├── service/  AvailabilityService, BookingCreator (transactional create), BookingService
+├── web/      Controllers, DTOs, error handling
+└── config/   Clock bean, X-Request-Id filter (request id in logs)
 ```
 
-## Design and Implementation Notes
-
-The main focus of the implementation is to ensure reliable booking creation, correct technician assignment, and consistent behaviour under concurrent requests.
-
-The assignment rules are kept separate from the Spring application layer, while booking creation and database operations are handled transactionally.
-
-Concurrency is handled by locking all eligible technician candidates before making an assignment. This prevents multiple simultaneous requests from assigning overlapping jobs to the same technician.
-
-Idempotency is also supported so that retries using the same key do not create duplicate bookings.
-
-The implementation and its design decisions are documented in [DESIGN.md](DESIGN.md). The test suite includes unit tests, API integration tests, and concurrent booking scenarios.
-
-**Test status:** All 32 tests passed with `mvn clean test` in the development environment, including real-HTTP integration tests and concurrency tests.
+Concurrency is handled by locking every eligible technician row before assigning one, so two requests cannot both take the same technician. See [DESIGN.md](DESIGN.md) for details.

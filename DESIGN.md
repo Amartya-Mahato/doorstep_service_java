@@ -305,6 +305,6 @@ With another week of development time, I would prioritize the following improvem
 
 4. **Idempotency improvements:** Store a request hash alongside each idempotency key. If the same key is received with a different request body, return `422 Unprocessable Entity` instead of silently returning the original booking. Also, introduce an expiry policy for idempotency keys.
 
-5. **Production readiness:** Add rate limiting, application metrics using Micrometer and Prometheus, API documentation through springdoc/OpenAPI, and authentication.
+5. **Production readiness:** Add rate limiting, application metrics using Micrometer and Prometheus, and authentication. (API documentation is already served through springdoc/OpenAPI at `/swagger-ui.html`.)
 
 These improvements would strengthen the existing booking workflow while making the application easier to operate and scale as the number of cities, technicians, and bookings increases.
