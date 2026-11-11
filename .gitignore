@@ -4,7 +4,9 @@ target/
 .vscode/
 .classpath
 .project
-.settings/# OS files
+.settings/
+
+# OS files
 .DS_Store
 Thumbs.db
 
