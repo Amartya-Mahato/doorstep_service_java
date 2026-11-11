@@ -7,6 +7,9 @@ RUN mvn -q -B -DskipTests package
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY --from=build /app/target/doorstep-service-0.0.1.jar app.jar
+# Run as a non-root user.
+RUN groupadd --system app && useradd --system --gid app app
+COPY --from=build --chown=app:app /app/target/doorstep-service-0.0.1.jar app.jar
+USER app
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
